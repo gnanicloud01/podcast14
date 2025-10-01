@@ -9,21 +9,18 @@ const { Pool } = require('pg');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Middleware
+// Startup logging
+console.log('🚀 Starting SoundWave Music Player...');
+console.log('📊 Environment Info:');
+console.log('   - NODE_ENV:', process.env.NODE_ENV);
+console.log('   - PORT:', PORT);
+console.log('   - DATABASE_URL exists:', !!process.env.DATABASE_URL);
+console.log('   - SESSION_SECRET exists:', !!process.env.SESSION_SECRET);
+
+// Basic middleware (session will be configured after database setup)
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
-app.use(session({
-    secret: process.env.SESSION_SECRET || 'soundwave-admin-secret-key-change-in-production',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: false, // Set to true in production with HTTPS
-        maxAge: 2 * 60 * 60 * 1000, // 2 hours instead of 24
-        httpOnly: true // Prevent XSS attacks
-    },
-    name: 'soundwave.sid' // Custom session name
-}));
 
 // Database setup
 let db;
@@ -40,6 +37,8 @@ const createInsertQuery = (table, columns) => {
 if (process.env.DATABASE_URL) {
     // Use PostgreSQL for production (Render.com)
     console.log('🔗 Using PostgreSQL database');
+    console.log('🔗 DATABASE_URL exists:', !!process.env.DATABASE_URL);
+    console.log('🔗 NODE_ENV:', process.env.NODE_ENV);
     isPostgres = true;
     const pool = new Pool({
         connectionString: process.env.DATABASE_URL,
@@ -114,6 +113,36 @@ if (process.env.DATABASE_URL) {
     console.log('🗄️ Using SQLite database for local development');
     db = new sqlite3.Database('./music_player.db');
 }
+
+// Configure session store after database setup
+let sessionConfig = {
+    secret: process.env.SESSION_SECRET || 'soundwave-admin-secret-key-change-in-production',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: false, // Set to true in production with HTTPS
+        maxAge: 2 * 60 * 60 * 1000, // 2 hours
+        httpOnly: true // Prevent XSS attacks
+    },
+    name: 'soundwave.sid'
+};
+
+// Use PostgreSQL session store in production to avoid MemoryStore warning
+if (isPostgres && process.env.DATABASE_URL) {
+    try {
+        const pgSession = require('connect-pg-simple')(session);
+        sessionConfig.store = new pgSession({
+            conString: process.env.DATABASE_URL,
+            tableName: 'user_sessions',
+            createTableIfMissing: true
+        });
+        console.log('✅ Using PostgreSQL session store');
+    } catch (err) {
+        console.log('⚠️ PostgreSQL session store not available, using memory store');
+    }
+}
+
+app.use(session(sessionConfig));
 
 // Initialize database tables
 db.serialize(() => {
@@ -590,6 +619,73 @@ app.get('/api/auth-status', (req, res) => {
     } else {
         res.json({ authenticated: false });
     }
+});
+
+// Database status endpoint for debugging
+app.get('/api/db-status', (req, res) => {
+    // Get counts of tracks and videos
+    db.get('SELECT COUNT(*) as track_count FROM tracks', (err, trackResult) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to count tracks: ' + err.message });
+        }
+        
+        db.get('SELECT COUNT(*) as video_count FROM videos', (err, videoResult) => {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to count videos: ' + err.message });
+            }
+            
+            res.json({
+                database: isPostgres ? 'PostgreSQL' : 'SQLite',
+                hasDbUrl: !!process.env.DATABASE_URL,
+                nodeEnv: process.env.NODE_ENV,
+                timestamp: new Date().toISOString(),
+                counts: {
+                    tracks: trackResult.track_count,
+                    videos: videoResult.video_count
+                },
+                sessionStore: isPostgres ? 'PostgreSQL' : 'Memory'
+            });
+        });
+    });
+});
+
+// Test database write/read
+app.post('/api/test-db', requireAuth, (req, res) => {
+    const testTitle = `Test Video ${Date.now()}`;
+    const query = createInsertQuery('videos', ['title', 'description', 'url', 'thumbnail', 'duration', 'category']);
+    
+    console.log('🧪 Testing database with query:', query);
+    
+    db.run(
+        query,
+        [testTitle, 'Test description', 'https://test.com/video.mp4', 'https://test.com/thumb.jpg', 120, 'test'],
+        function (err) {
+            if (err) {
+                console.error('❌ Test DB Error:', err);
+                res.status(500).json({ error: err.message, query });
+                return;
+            }
+            
+            console.log('✅ Test DB Success, ID:', this.lastID);
+            
+            // Now try to read it back
+            db.get('SELECT * FROM videos WHERE title = ?', [testTitle], (err, row) => {
+                if (err) {
+                    console.error('❌ Test DB Read Error:', err);
+                    res.status(500).json({ error: 'Read failed: ' + err.message });
+                    return;
+                }
+                
+                console.log('✅ Test DB Read Success:', row);
+                res.json({ 
+                    success: true, 
+                    insertedId: this.lastID, 
+                    readBack: row,
+                    database: isPostgres ? 'PostgreSQL' : 'SQLite'
+                });
+            });
+        }
+    );
 });
 
 // API Routes

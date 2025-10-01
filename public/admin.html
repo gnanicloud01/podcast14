@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Player Admin Dashboard</title>
+    <link rel="stylesheet" href="admin-styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="admin-dashboard">
+        <!-- Header -->
+        <header class="admin-header">
+            <div class="logo">
+                <i class="fas fa-headphones-alt"></i>
+                <h1>SoundWave Admin</h1>
+            </div>
+            <div class="header-actions">
+                <button class="btn-primary" onclick="window.open('/', '_blank')">
+                    <i class="fas fa-play"></i> View Player
+                </button>
+            </div>
+        </header>
+
+        <!-- Navigation -->
+        <nav class="admin-nav">
+            <ul>
+                <li class="active" data-tab="tracks"><i class="fas fa-music"></i> Tracks</li>
+                <li data-tab="videos"><i class="fas fa-video"></i> Videos</li>
+                <li data-tab="playlists"><i class="fas fa-list"></i> Playlists</li>
+                <li data-tab="analytics"><i class="fas fa-chart-bar"></i> Analytics</li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="admin-content">
+            <!-- Tracks Tab -->
+            <div id="tracksTab" class="tab-content active">
+                <div class="content-header">
+                    <h2>Manage Music Tracks</h2>
+                    <div class="header-actions">
+                        <button class="btn-secondary" onclick="showBulkImportModal()">
+                            <i class="fas fa-upload"></i> Bulk Import
+                        </button>
+                        <button class="btn-primary" onclick="showAddTrackModal()">
+                            <i class="fas fa-plus"></i> Add Track
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="file-type-info">
+                    <div class="info-card">
+                        <i class="fas fa-music"></i>
+                        <div>
+                            <strong>Music Tracks (Audio Only)</strong>
+                            <p>Supported formats: MP3, WAV, AAC, FLAC, M4A, WMA</p>
+                            <p><strong>Note:</strong> MP4 files are videos and should be added to the Videos section.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-music"></i></div>
+                        <div class="stat-info">
+                            <div class="stat-number" id="totalTracks">0</div>
+                            <div class="stat-label">Total Tracks</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-clock"></i></div>
+                        <div class="stat-info">
+                            <div class="stat-number" id="totalDuration">0h 0m</div>
+                            <div class="stat-label">Total Duration</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tracks-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Cover</th>
+                                <th>Title</th>
+                                <th>Artist</th>
+                                <th>Album</th>
+                                <th>Duration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tracksTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Videos Tab -->
+            <div id="videosTab" class="tab-content">
+                <div class="content-header">
+                    <h2>Manage Videos & Podcasts</h2>
+                    <button class="btn-primary" onclick="showAddVideoModal()">
+                        <i class="fas fa-plus"></i> Add Video
+                    </button>
+                </div>
+                
+                <div class="file-type-info">
+                    <div class="info-card">
+                        <i class="fas fa-video"></i>
+                        <div>
+                            <strong>Videos & Video Podcasts</strong>
+                            <p>Supported formats: MP4, WebM, AVI, MOV, WMV</p>
+                            <p><strong>All MP4 files belong here</strong> - including video podcasts and music videos.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-video"></i></div>
+                        <div class="stat-info">
+                            <div class="stat-number" id="totalVideos">0</div>
+                            <div class="stat-label">Total Videos</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-clock"></i></div>
+                        <div class="stat-info">
+                            <div class="stat-number" id="totalVideoDuration">0h 0m</div>
+                            <div class="stat-label">Total Duration</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="videos-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Thumbnail</th>
+                                <th>Title</th>
+                                <th>Category</th>
+                                <th>Duration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="videosTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Playlists Tab -->
+            <div id="playlistsTab" class="tab-content">
+                <div class="content-header">
+                    <h2>Manage Playlists</h2>
+                    <button class="btn-primary" onclick="showAddPlaylistModal()">
+                        <i class="fas fa-plus"></i> Create Playlist
+                    </button>
+                </div>
+
+                <div class="playlists-grid" id="playlistsGrid">
+                </div>
+            </div>
+
+            <!-- Analytics Tab -->
+            <div id="analyticsTab" class="tab-content">
+                <div class="content-header">
+                    <h2>Analytics Dashboard</h2>
+                </div>
+                
+                <div class="analytics-grid">
+                    <div class="chart-card">
+                        <h3>Most Played Tracks</h3>
+                        <div class="chart-placeholder">
+                            <i class="fas fa-chart-bar"></i>
+                            <p>Analytics coming soon...</p>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h3>User Activity</h3>
+                        <div class="chart-placeholder">
+                            <i class="fas fa-chart-line"></i>
+                            <p>Analytics coming soon...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Track Modal -->
+    <div id="addTrackModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add New Track</h3>
+                <button class="close-btn" onclick="closeModal('addTrackModal')">&times;</button>
+            </div>
+            <form id="addTrackForm">
+                <div class="form-group">
+                    <label for="trackTitle">Title *</label>
+                    <input type="text" id="trackTitle" required>
+                </div>
+                <div class="form-group">
+                    <label for="trackArtist">Artist *</label>
+                    <input type="text" id="trackArtist" required>
+                </div>
+                <div class="form-group">
+                    <label for="trackAlbum">Album</label>
+                    <input type="text" id="trackAlbum">
+                </div>
+                <div class="form-group">
+                    <label for="trackUrl">Stream URL *</label>
+                    <input type="url" id="trackUrl" placeholder="https://example.com/track.mp3" required>
+                    <div class="url-helper">
+                        <small>
+                            <strong>Supported URLs:</strong><br>
+                            • Direct audio files: https://example.com/song.mp3<br>
+                            • Google Drive: Use "Get shareable link" → Convert below<br>
+                            • AWS S3: Public bucket URLs or signed URLs<br>
+                            • CDN URLs: CloudFront, jsDelivr, etc.
+                        </small>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="googleDriveUrl">Google Drive Link Converter</label>
+                    <input type="text" id="googleDriveUrl" placeholder="Paste Google Drive share link here">
+                    <button type="button" class="btn-secondary" onclick="convertGoogleDriveUrl()">Convert to Direct URL</button>
+                </div>
+                <div class="form-group">
+                    <label for="trackCover">Cover Image URL</label>
+                    <input type="url" id="trackCover" placeholder="https://example.com/cover.jpg">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('addTrackModal')">Cancel</button>
+                    <button type="submit" class="btn-primary">Add Track</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Playlist Modal -->
+    <div id="addPlaylistModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Playlist</h3>
+                <button class="close-btn" onclick="closeModal('addPlaylistModal')">&times;</button>
+            </div>
+            <form id="addPlaylistForm">
+                <div class="form-group">
+                    <label for="playlistName">Playlist Name *</label>
+                    <input type="text" id="playlistName" required>
+                </div>
+                <div class="form-group">
+                    <label for="playlistDescription">Description</label>
+                    <textarea id="playlistDescription" rows="3"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('addPlaylistModal')">Cancel</button>
+                    <button type="submit" class="btn-primary">Create Playlist</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Bulk Import Modal -->
+    <div id="bulkImportModal" class="modal">
+        <div class="modal-content large-modal">
+            <div class="modal-header">
+                <h3>Bulk Import Tracks</h3>
+                <button class="close-btn" onclick="closeModal('bulkImportModal')">&times;</button>
+            </div>
+            <div class="bulk-import-content">
+                <div class="import-instructions">
+                    <h4>Import Format</h4>
+                    <p>Enter one track per line in the following format:</p>
+                    <code>Title | Artist | Album | URL | Cover Image URL</code>
+                    <p><strong>Example:</strong></p>
+                    <code>Amazing Song | Great Artist | Best Album | https://example.com/song.mp3 | https://example.com/cover.jpg</code>
+                    <p><em>Note: Album and Cover Image URL are optional. Use empty fields if not available.</em></p>
+                </div>
+                
+                <div class="form-group">
+                    <label for="bulkTrackData">Track Data *</label>
+                    <textarea id="bulkTrackData" rows="10" placeholder="Enter tracks here, one per line...
+Amazing Song | Great Artist | Best Album | https://example.com/song.mp3 | https://example.com/cover.jpg
+Another Track | Cool Artist | | https://example.com/track2.mp3 |"></textarea>
+                </div>
+                
+                <div class="import-preview" id="importPreview" style="display: none;">
+                    <h4>Preview</h4>
+                    <div id="previewList"></div>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('bulkImportModal')">Cancel</button>
+                    <button type="button" class="btn-secondary" onclick="previewBulkImport()">Preview</button>
+                    <button type="button" class="btn-primary" onclick="executeBulkImport()">Import Tracks</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Video Modal -->
+    <div id="addVideoModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add New Video</h3>
+                <button class="close-btn" onclick="closeModal('addVideoModal')">&times;</button>
+            </div>
+            <form id="addVideoForm">
+                <div class="form-group">
+                    <label for="videoTitle">Title *</label>
+                    <input type="text" id="videoTitle" required>
+                </div>
+                <div class="form-group">
+                    <label for="videoDescription">Description</label>
+                    <textarea id="videoDescription" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="videoCategory">Category</label>
+                    <select id="videoCategory">
+                        <option value="">Select Category</option>
+                        <option value="Podcast">Podcast</option>
+                        <option value="Music Video">Music Video</option>
+                        <option value="Tutorial">Tutorial</option>
+                        <option value="Performance">Performance</option>
+                        <option value="Interview">Interview</option>
+                        <option value="Documentary">Documentary</option>
+                        <option value="Behind the Scenes">Behind the Scenes</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="videoUrl">Video URL *</label>
+                    <input type="url" id="videoUrl" placeholder="https://example.com/video.mp4" required>
+                </div>
+                <div class="form-group">
+                    <label for="videoThumbnail">Thumbnail URL</label>
+                    <input type="url" id="videoThumbnail" placeholder="https://example.com/thumbnail.jpg">
+                </div>
+                <div class="form-group">
+                    <label for="videoDuration">Duration (seconds)</label>
+                    <input type="number" id="videoDuration" placeholder="300">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('addVideoModal')">Cancel</button>
+                    <button type="submit" class="btn-primary">Add Video</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>""

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database Test - SoundWave</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .status-box {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #4CAF50;
+        }
+        .error {
+            border-left-color: #f44336;
+        }
+        .warning {
+            border-left-color: #ff9800;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        pre {
+            background: #333;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 Database Status Test</h1>
+    <p>This page helps diagnose database connection issues.</p>
+
+    <button onclick="checkDbStatus()">Check Database Status</button>
+    <button onclick="testDatabase()">Test Database Write/Read</button>
+
+    <div id="results"></div>
+
+    <script>
+        async function checkDbStatus() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="status-box">Checking database status...</div>';
+
+            try {
+                const response = await fetch('/api/db-status');
+                const data = await response.json();
+                
+                let statusClass = data.database === 'PostgreSQL' ? 'status-box' : 'status-box error';
+                
+                resultsDiv.innerHTML = `
+                    <div class="${statusClass}">
+                        <h3>Database Status</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                        ${data.database === 'PostgreSQL' ? 
+                            '<p>✅ <strong>Good!</strong> Using PostgreSQL (persistent storage)</p>' : 
+                            '<p>❌ <strong>Problem!</strong> Using SQLite (data will be lost on restart)</p>'
+                        }
+                    </div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="status-box error">
+                        <h3>Error</h3>
+                        <p>Failed to check database status: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testDatabase() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="status-box">Testing database operations...</div>';
+
+            try {
+                const response = await fetch('/api/test-db', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultsDiv.innerHTML = `
+                        <div class="status-box">
+                            <h3>Database Test Results</h3>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                            <p>✅ <strong>Success!</strong> Database write and read operations working correctly.</p>
+                        </div>
+                    `;
+                } else {
+                    resultsDiv.innerHTML = `
+                        <div class="status-box error">
+                            <h3>Database Test Failed</h3>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                            <p>❌ <strong>Error!</strong> Database operations are failing.</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                if (error.message.includes('401')) {
+                    resultsDiv.innerHTML = `
+                        <div class="status-box warning">
+                            <h3>Authentication Required</h3>
+                            <p>⚠️ You need to login first to test database operations.</p>
+                            <p><a href="/login.html" style="color: #4CAF50;">Go to Login Page</a></p>
+                        </div>
+                    `;
+                } else {
+                    resultsDiv.innerHTML = `
+                        <div class="status-box error">
+                            <h3>Test Error</h3>
+                            <p>Failed to test database: ${error.message}</p>
+                        </div>
+                    `;
+                }
+            }
+        }
+
+        // Auto-check status on page load
+        window.onload = function() {
+            checkDbStatus();
+        };
+    </script>
+</body>
+</html>

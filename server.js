@@ -39,24 +39,37 @@ const createInsertQuery = (table, columns) => {
 
 if (process.env.DATABASE_URL) {
     // Use PostgreSQL for production (Render.com)
+    console.log('🔗 Using PostgreSQL database');
     isPostgres = true;
     const pool = new Pool({
         connectionString: process.env.DATABASE_URL,
         ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
     });
     
+    // Test database connection
+    pool.connect((err, client, release) => {
+        if (err) {
+            console.error('❌ Error connecting to PostgreSQL:', err);
+        } else {
+            console.log('✅ Successfully connected to PostgreSQL database');
+            release();
+        }
+    });
+    
     // Create a wrapper to make PostgreSQL work like SQLite
     db = {
         run: (query, params = [], callback) => {
-            // For PostgreSQL, don't convert placeholders as we'll use the helper function
+            console.log('🔍 PostgreSQL RUN Query:', query, 'Params:', params);
             pool.query(query, params)
                 .then(result => {
+                    console.log('✅ PostgreSQL RUN Success:', result.rowCount, 'rows affected');
                     if (callback) {
                         const lastID = result.rows && result.rows.length > 0 ? result.rows[0].id : null;
                         callback.call({ lastID }, null);
                     }
                 })
                 .catch(err => {
+                    console.error('❌ PostgreSQL RUN Error:', err.message);
                     if (callback) callback(err);
                 });
         },
@@ -64,19 +77,33 @@ if (process.env.DATABASE_URL) {
             // For PostgreSQL, convert ? to $1, $2, etc.
             let paramIndex = 0;
             const pgQuery = query.replace(/\?/g, () => `$${++paramIndex}`);
+            console.log('🔍 PostgreSQL GET Query:', pgQuery, 'Params:', params);
             
             pool.query(pgQuery, params)
-                .then(result => callback(null, result.rows[0]))
-                .catch(err => callback(err));
+                .then(result => {
+                    console.log('✅ PostgreSQL GET Success:', result.rows.length, 'rows returned');
+                    callback(null, result.rows[0]);
+                })
+                .catch(err => {
+                    console.error('❌ PostgreSQL GET Error:', err.message);
+                    callback(err);
+                });
         },
         all: (query, params = [], callback) => {
             // For PostgreSQL, convert ? to $1, $2, etc.
             let paramIndex = 0;
             const pgQuery = query.replace(/\?/g, () => `$${++paramIndex}`);
+            console.log('🔍 PostgreSQL ALL Query:', pgQuery, 'Params:', params);
             
             pool.query(pgQuery, params)
-                .then(result => callback(null, result.rows))
-                .catch(err => callback(err));
+                .then(result => {
+                    console.log('✅ PostgreSQL ALL Success:', result.rows.length, 'rows returned');
+                    callback(null, result.rows);
+                })
+                .catch(err => {
+                    console.error('❌ PostgreSQL ALL Error:', err.message);
+                    callback(err);
+                });
         },
         serialize: (callback) => {
             callback();
@@ -84,6 +111,7 @@ if (process.env.DATABASE_URL) {
     };
 } else {
     // Use SQLite for local development
+    console.log('🗄️ Using SQLite database for local development');
     db = new sqlite3.Database('./music_player.db');
 }
 
@@ -424,8 +452,8 @@ db.serialize(() => {
             ];
 
             genres.forEach(genre => {
-                db.run('INSERT INTO track_genres (track_id, genre) VALUES (?, ?)',
-                    [genre.track_id, genre.genre]);
+                const genreQuery = createInsertQuery('track_genres', ['track_id', 'genre']);
+                db.run(genreQuery, [genre.track_id, genre.genre]);
             });
         }
     });
@@ -471,8 +499,10 @@ db.serialize(() => {
             ];
 
             demoVideos.forEach(video => {
+                const query = createInsertQuery('videos', ['title', 'description', 'url', 'thumbnail', 'duration', 'category']);
+                
                 db.run(
-                    'INSERT INTO videos (title, description, url, thumbnail, duration, category) VALUES (?, ?, ?, ?, ?, ?)',
+                    query,
                     [video.title, video.description, video.url, video.thumbnail, video.duration, video.category],
                     function (err) {
                         if (err) {
@@ -489,8 +519,9 @@ db.serialize(() => {
     // Create default admin user
     db.get('SELECT COUNT(*) as count FROM users WHERE role = "admin"', (err, row) => {
         if (!err && row.count === 0) {
+            const adminUserQuery = createInsertQuery('users', ['username', 'password', 'role']);
             db.run(
-                'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
+                adminUserQuery,
                 ['Gnani14', 'Gnaneshwar@14', 'admin'],
                 function (err) {
                     if (err) {
@@ -676,8 +707,9 @@ app.get('/api/playlists', (req, res) => {
 app.post('/api/playlists', requireAuth, (req, res) => {
     const { name, description } = req.body;
 
+    const playlistQuery = createInsertQuery('playlists', ['name', 'description']);
     db.run(
-        'INSERT INTO playlists (name, description) VALUES (?, ?)',
+        playlistQuery,
         [name, description],
         function (err) {
             if (err) {
@@ -717,8 +749,9 @@ app.post('/api/user-playlists', (req, res) => {
     const { name, description, is_public } = req.body;
     const userId = req.session?.user?.id || 'guest';
 
+    const userPlaylistQuery = createInsertQuery('user_playlists', ['user_id', 'name', 'description', 'is_public']);
     db.run(
-        'INSERT INTO user_playlists (user_id, name, description, is_public) VALUES (?, ?, ?, ?)',
+        userPlaylistQuery,
         [userId, name, description, is_public || 0],
         function (err) {
             if (err) {
@@ -757,8 +790,9 @@ app.post('/api/user-playlists/:id/tracks', (req, res) => {
 
             const position = (result.max_pos || 0) + 1;
 
+            const playlistTrackQuery = createInsertQuery('user_playlist_tracks', ['playlist_id', 'track_id', 'position']);
             db.run(
-                'INSERT INTO user_playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)',
+                playlistTrackQuery,
                 [id, track_id, position],
                 function (err) {
                     if (err) {
@@ -854,8 +888,9 @@ app.post('/api/track-interaction', (req, res) => {
 
     // Add to listening history
     if (interaction_type === 'play') {
+        const historyQuery = createInsertQuery('listening_history', ['user_id', 'track_id', 'play_duration', 'completed']);
         db.run(
-            'INSERT INTO listening_history (user_id, track_id, play_duration, completed) VALUES (?, ?, ?, ?)',
+            historyQuery,
             [userId, track_id, play_duration || 0, (play_duration || 0) > 30 ? 1 : 0]
         );
     }
@@ -911,7 +946,8 @@ app.post('/api/favorites/:trackId', (req, res) => {
             });
         } else {
             // Add to favorites
-            db.run('INSERT INTO user_favorites (user_id, track_id) VALUES (?, ?)', [userId, trackId], (err) => {
+            const favoriteQuery = createInsertQuery('user_favorites', ['user_id', 'track_id']);
+            db.run(favoriteQuery, [userId, trackId], (err) => {
                 if (err) {
                     res.status(500).json({ error: err.message });
                     return;
@@ -1188,14 +1224,18 @@ app.get('/api/videos', (req, res) => {
 app.post('/api/videos', requireAuth, (req, res) => {
     const { title, description, url, thumbnail, duration, category } = req.body;
 
+    const query = createInsertQuery('videos', ['title', 'description', 'url', 'thumbnail', 'duration', 'category']);
+    
     db.run(
-        'INSERT INTO videos (title, description, url, thumbnail, duration, category) VALUES (?, ?, ?, ?, ?, ?)',
+        query,
         [title, description, url, thumbnail, duration, category],
         function (err) {
             if (err) {
+                console.error('❌ Error adding video:', err);
                 res.status(500).json({ error: err.message });
                 return;
             }
+            console.log('✅ Video added successfully with ID:', this.lastID);
             res.json({ id: this.lastID, message: 'Video added successfully' });
         }
     );
@@ -1237,7 +1277,8 @@ app.post('/api/video-favorites/:videoId', (req, res) => {
             });
         } else {
             // Add to favorites
-            db.run('INSERT INTO video_favorites (user_id, video_id) VALUES (?, ?)', [userId, videoId], (err) => {
+            const videoFavoriteQuery = createInsertQuery('video_favorites', ['user_id', 'video_id']);
+            db.run(videoFavoriteQuery, [userId, videoId], (err) => {
                 if (err) {
                     res.status(500).json({ error: err.message });
                     return;
@@ -1274,8 +1315,9 @@ app.post('/api/video-watch', (req, res) => {
     const { video_id, watch_duration, completed } = req.body;
     const userId = req.session?.user?.id || 'guest';
 
+    const videoHistoryQuery = createInsertQuery('video_history', ['user_id', 'video_id', 'watch_duration', 'completed']);
     db.run(
-        'INSERT INTO video_history (user_id, video_id, watch_duration, completed) VALUES (?, ?, ?, ?)',
+        videoHistoryQuery,
         [userId, video_id, watch_duration || 0, completed ? 1 : 0],
         function (err) {
             if (err) {

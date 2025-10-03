@@ -4,429 +4,162 @@ const bodyParser = require('body-parser');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const session = require('express-session');
-const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Startup logging
-console.log('🚀 Starting SoundWave Music Player...');
-console.log('📊 Environment Info:');
-console.log('   - NODE_ENV:', process.env.NODE_ENV);
-console.log('   - PORT:', PORT);
-console.log('   - DATABASE_URL exists:', !!process.env.DATABASE_URL);
-console.log('   - SESSION_SECRET exists:', !!process.env.SESSION_SECRET);
-
-// Basic middleware (session will be configured after database setup)
+// Middleware
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
-
-// Database setup
-let db;
-let isPostgres = false;
-
-// Helper function to create INSERT queries with RETURNING for PostgreSQL
-const createInsertQuery = (table, columns) => {
-    const placeholders = columns.map((_, i) => isPostgres ? `$${i + 1}` : '?').join(', ');
-    const columnNames = columns.join(', ');
-    const returning = isPostgres ? ' RETURNING id' : '';
-    return `INSERT INTO ${table} (${columnNames}) VALUES (${placeholders})${returning}`;
-};
-
-if (process.env.DATABASE_URL) {
-    // Use PostgreSQL for production (Render.com)
-    console.log('🔗 Using PostgreSQL database');
-    console.log('🔗 DATABASE_URL exists:', !!process.env.DATABASE_URL);
-    console.log('🔗 NODE_ENV:', process.env.NODE_ENV);
-    isPostgres = true;
-    const pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-    });
-    
-    // Test database connection
-    pool.connect((err, client, release) => {
-        if (err) {
-            console.error('❌ Error connecting to PostgreSQL:', err);
-        } else {
-            console.log('✅ Successfully connected to PostgreSQL database');
-            release();
-        }
-    });
-    
-    // Create a wrapper to make PostgreSQL work like SQLite
-    db = {
-        run: (query, params = [], callback) => {
-            console.log('🔍 PostgreSQL RUN Query:', query, 'Params:', params);
-            pool.query(query, params)
-                .then(result => {
-                    console.log('✅ PostgreSQL RUN Success:', result.rowCount, 'rows affected');
-                    if (callback) {
-                        const lastID = result.rows && result.rows.length > 0 ? result.rows[0].id : null;
-                        callback.call({ lastID }, null);
-                    }
-                })
-                .catch(err => {
-                    console.error('❌ PostgreSQL RUN Error:', err.message);
-                    if (callback) callback(err);
-                });
-        },
-        get: (query, params = [], callback) => {
-            // For PostgreSQL, convert ? to $1, $2, etc.
-            let paramIndex = 0;
-            const pgQuery = query.replace(/\?/g, () => `$${++paramIndex}`);
-            console.log('🔍 PostgreSQL GET Query:', pgQuery, 'Params:', params);
-            
-            pool.query(pgQuery, params)
-                .then(result => {
-                    console.log('✅ PostgreSQL GET Success:', result.rows.length, 'rows returned');
-                    callback(null, result.rows[0]);
-                })
-                .catch(err => {
-                    console.error('❌ PostgreSQL GET Error:', err.message);
-                    callback(err);
-                });
-        },
-        all: (query, params = [], callback) => {
-            // For PostgreSQL, convert ? to $1, $2, etc.
-            let paramIndex = 0;
-            const pgQuery = query.replace(/\?/g, () => `$${++paramIndex}`);
-            console.log('🔍 PostgreSQL ALL Query:', pgQuery, 'Params:', params);
-            
-            pool.query(pgQuery, params)
-                .then(result => {
-                    console.log('✅ PostgreSQL ALL Success:', result.rows.length, 'rows returned');
-                    callback(null, result.rows);
-                })
-                .catch(err => {
-                    console.error('❌ PostgreSQL ALL Error:', err.message);
-                    callback(err);
-                });
-        },
-        serialize: (callback) => {
-            callback();
-        }
-    };
-} else {
-    // Use SQLite for local development
-    console.log('🗄️ Using SQLite database for local development');
-    db = new sqlite3.Database('./music_player.db');
-}
-
-// Configure session store after database setup
-let sessionConfig = {
+app.use(session({
     secret: process.env.SESSION_SECRET || 'soundwave-admin-secret-key-change-in-production',
     resave: false,
     saveUninitialized: false,
     cookie: {
         secure: false, // Set to true in production with HTTPS
-        maxAge: 2 * 60 * 60 * 1000, // 2 hours
+        maxAge: 2 * 60 * 60 * 1000, // 2 hours instead of 24
         httpOnly: true // Prevent XSS attacks
     },
-    name: 'soundwave.sid'
-};
+    name: 'soundwave.sid' // Custom session name
+}));
 
-// Use PostgreSQL session store in production to avoid MemoryStore warning
-if (isPostgres && process.env.DATABASE_URL) {
-    try {
-        const pgSession = require('connect-pg-simple')(session);
-        sessionConfig.store = new pgSession({
-            conString: process.env.DATABASE_URL,
-            tableName: 'user_sessions',
-            createTableIfMissing: true
-        });
-        console.log('✅ Using PostgreSQL session store');
-    } catch (err) {
-        console.log('⚠️ PostgreSQL session store not available, using memory store');
-    }
-}
-
-app.use(session(sessionConfig));
+// Database setup
+const db = new sqlite3.Database('./music_player.db');
 
 // Initialize database tables
 db.serialize(() => {
-    const createTracksTable = isPostgres ? 
-        `CREATE TABLE IF NOT EXISTS tracks (
-            id SERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
-            artist TEXT NOT NULL,
-            album TEXT,
-            url TEXT NOT NULL,
-            duration INTEGER,
-            cover_image TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )` :
-        `CREATE TABLE IF NOT EXISTS tracks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            artist TEXT NOT NULL,
-            album TEXT,
-            url TEXT NOT NULL,
-            duration INTEGER,
-            cover_image TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`;
-    
-    db.run(createTracksTable);
+    db.run(`CREATE TABLE IF NOT EXISTS tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    album TEXT,
+    url TEXT NOT NULL,
+    duration INTEGER,
+    cover_image TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
 
-    const createPlaylistsTable = isPostgres ?
-        `CREATE TABLE IF NOT EXISTS playlists (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )` :
-        `CREATE TABLE IF NOT EXISTS playlists (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            description TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`;
-    
-    db.run(createPlaylistsTable);
+    db.run(`CREATE TABLE IF NOT EXISTS playlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
 
-    const createPlaylistTracksTable = isPostgres ?
-        `CREATE TABLE IF NOT EXISTS playlist_tracks (
-            id SERIAL PRIMARY KEY,
-            playlist_id INTEGER REFERENCES playlists(id),
-            track_id INTEGER REFERENCES tracks(id),
-            position INTEGER
-        )` :
-        `CREATE TABLE IF NOT EXISTS playlist_tracks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            playlist_id INTEGER,
-            track_id INTEGER,
-            position INTEGER,
-            FOREIGN KEY (playlist_id) REFERENCES playlists (id),
-            FOREIGN KEY (track_id) REFERENCES tracks (id)
-        )`;
-    
-    db.run(createPlaylistTracksTable);
+    db.run(`CREATE TABLE IF NOT EXISTS playlist_tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playlist_id INTEGER,
+    track_id INTEGER,
+    position INTEGER,
+    FOREIGN KEY (playlist_id) REFERENCES playlists (id),
+    FOREIGN KEY (track_id) REFERENCES tracks (id)
+  )`);
 
-    const createUsersTable = isPostgres ?
-        `CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT DEFAULT 'user',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )` :
-        `CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT DEFAULT 'user',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`;
-    
-    db.run(createUsersTable);
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    role TEXT DEFAULT 'user',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
 
-    const createUserPlaylistsTable = isPostgres ?
-        `CREATE TABLE IF NOT EXISTS user_playlists (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id),
-            name TEXT NOT NULL,
-            description TEXT,
-            is_public BOOLEAN DEFAULT false,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )` :
-        `CREATE TABLE IF NOT EXISTS user_playlists (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            name TEXT NOT NULL,
-            description TEXT,
-            is_public BOOLEAN DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )`;
-    
-    db.run(createUserPlaylistsTable);
+    db.run(`CREATE TABLE IF NOT EXISTS user_playlists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_public BOOLEAN DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users (id)
+  )`);
 
-    const createUserPlaylistTracksTable = isPostgres ?
-        `CREATE TABLE IF NOT EXISTS user_playlist_tracks (
-            id SERIAL PRIMARY KEY,
-            playlist_id INTEGER REFERENCES user_playlists(id),
-            track_id INTEGER REFERENCES tracks(id),
-            position INTEGER,
-            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )` :
-        `CREATE TABLE IF NOT EXISTS user_playlist_tracks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            playlist_id INTEGER,
-            track_id INTEGER,
-            position INTEGER,
-            added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (playlist_id) REFERENCES user_playlists (id),
-            FOREIGN KEY (track_id) REFERENCES tracks (id)
-        )`;
-    
-    db.run(createUserPlaylistTracksTable);
+    db.run(`CREATE TABLE IF NOT EXISTS user_playlist_tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playlist_id INTEGER,
+    track_id INTEGER,
+    position INTEGER,
+    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (playlist_id) REFERENCES user_playlists (id),
+    FOREIGN KEY (track_id) REFERENCES tracks (id)
+  )`);
 
-    // Create remaining tables with PostgreSQL compatibility
-    const tables = [
-        {
-            name: 'user_interactions',
-            postgres: `CREATE TABLE IF NOT EXISTS user_interactions (
-                id SERIAL PRIMARY KEY,
-                user_id TEXT DEFAULT 'guest',
-                track_id INTEGER REFERENCES tracks(id),
-                interaction_type TEXT,
-                interaction_count INTEGER DEFAULT 1,
-                last_interaction TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                total_play_time INTEGER DEFAULT 0,
-                UNIQUE(user_id, track_id, interaction_type)
-            )`,
-            sqlite: `CREATE TABLE IF NOT EXISTS user_interactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT DEFAULT 'guest',
-                track_id INTEGER,
-                interaction_type TEXT,
-                interaction_count INTEGER DEFAULT 1,
-                last_interaction DATETIME DEFAULT CURRENT_TIMESTAMP,
-                total_play_time INTEGER DEFAULT 0,
-                FOREIGN KEY (track_id) REFERENCES tracks (id),
-                UNIQUE(user_id, track_id, interaction_type)
-            )`
-        },
-        {
-            name: 'user_favorites',
-            postgres: `CREATE TABLE IF NOT EXISTS user_favorites (
-                id SERIAL PRIMARY KEY,
-                user_id TEXT DEFAULT 'guest',
-                track_id INTEGER REFERENCES tracks(id),
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, track_id)
-            )`,
-            sqlite: `CREATE TABLE IF NOT EXISTS user_favorites (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT DEFAULT 'guest',
-                track_id INTEGER,
-                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (track_id) REFERENCES tracks (id),
-                UNIQUE(user_id, track_id)
-            )`
-        },
-        {
-            name: 'listening_history',
-            postgres: `CREATE TABLE IF NOT EXISTS listening_history (
-                id SERIAL PRIMARY KEY,
-                user_id TEXT DEFAULT 'guest',
-                track_id INTEGER REFERENCES tracks(id),
-                played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                play_duration INTEGER DEFAULT 0,
-                completed BOOLEAN DEFAULT false
-            )`,
-            sqlite: `CREATE TABLE IF NOT EXISTS listening_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT DEFAULT 'guest',
-                track_id INTEGER,
-                played_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                play_duration INTEGER DEFAULT 0,
-                completed BOOLEAN DEFAULT 0,
-                FOREIGN KEY (track_id) REFERENCES tracks (id)
-            )`
-        },
-        {
-            name: 'track_genres',
-            postgres: `CREATE TABLE IF NOT EXISTS track_genres (
-                id SERIAL PRIMARY KEY,
-                track_id INTEGER REFERENCES tracks(id),
-                genre TEXT
-            )`,
-            sqlite: `CREATE TABLE IF NOT EXISTS track_genres (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                track_id INTEGER,
-                genre TEXT,
-                FOREIGN KEY (track_id) REFERENCES tracks (id)
-            )`
-        },
-        {
-            name: 'user_preferences',
-            postgres: `CREATE TABLE IF NOT EXISTS user_preferences (
-                id SERIAL PRIMARY KEY,
-                user_id TEXT DEFAULT 'guest',
-                preference_key TEXT,
-                preference_value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, preference_key)
-            )`,
-            sqlite: `CREATE TABLE IF NOT EXISTS user_preferences (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT DEFAULT 'guest',
-                preference_key TEXT,
-                preference_value TEXT,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, preference_key)
-            )`
-        },
-        {
-            name: 'videos',
-            postgres: `CREATE TABLE IF NOT EXISTS videos (
-                id SERIAL PRIMARY KEY,
-                title TEXT NOT NULL,
-                description TEXT,
-                url TEXT NOT NULL,
-                thumbnail TEXT,
-                duration INTEGER,
-                category TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )`,
-            sqlite: `CREATE TABLE IF NOT EXISTS videos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                description TEXT,
-                url TEXT NOT NULL,
-                thumbnail TEXT,
-                duration INTEGER,
-                category TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`
-        },
-        {
-            name: 'video_favorites',
-            postgres: `CREATE TABLE IF NOT EXISTS video_favorites (
-                id SERIAL PRIMARY KEY,
-                user_id TEXT DEFAULT 'guest',
-                video_id INTEGER REFERENCES videos(id),
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, video_id)
-            )`,
-            sqlite: `CREATE TABLE IF NOT EXISTS video_favorites (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT DEFAULT 'guest',
-                video_id INTEGER,
-                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (video_id) REFERENCES videos (id),
-                UNIQUE(user_id, video_id)
-            )`
-        },
-        {
-            name: 'video_history',
-            postgres: `CREATE TABLE IF NOT EXISTS video_history (
-                id SERIAL PRIMARY KEY,
-                user_id TEXT DEFAULT 'guest',
-                video_id INTEGER REFERENCES videos(id),
-                watched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                watch_duration INTEGER DEFAULT 0,
-                completed BOOLEAN DEFAULT false
-            )`,
-            sqlite: `CREATE TABLE IF NOT EXISTS video_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT DEFAULT 'guest',
-                video_id INTEGER,
-                watched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                watch_duration INTEGER DEFAULT 0,
-                completed BOOLEAN DEFAULT 0,
-                FOREIGN KEY (video_id) REFERENCES videos (id)
-            )`
-        }
-    ];
+    db.run(`CREATE TABLE IF NOT EXISTS user_interactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT DEFAULT 'guest',
+    track_id INTEGER,
+    interaction_type TEXT, -- 'play', 'like', 'skip', 'complete'
+    interaction_count INTEGER DEFAULT 1,
+    last_interaction DATETIME DEFAULT CURRENT_TIMESTAMP,
+    total_play_time INTEGER DEFAULT 0,
+    FOREIGN KEY (track_id) REFERENCES tracks (id),
+    UNIQUE(user_id, track_id, interaction_type)
+  )`);
 
-    // Create all tables
-    tables.forEach(table => {
-        db.run(isPostgres ? table.postgres : table.sqlite);
-    });
+    db.run(`CREATE TABLE IF NOT EXISTS user_favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT DEFAULT 'guest',
+    track_id INTEGER,
+    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (track_id) REFERENCES tracks (id),
+    UNIQUE(user_id, track_id)
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS listening_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT DEFAULT 'guest',
+    track_id INTEGER,
+    played_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    play_duration INTEGER DEFAULT 0,
+    completed BOOLEAN DEFAULT 0,
+    FOREIGN KEY (track_id) REFERENCES tracks (id)
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS track_genres (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER,
+    genre TEXT,
+    FOREIGN KEY (track_id) REFERENCES tracks (id)
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS user_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT DEFAULT 'guest',
+    preference_key TEXT,
+    preference_value TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, preference_key)
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS videos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    url TEXT NOT NULL,
+    thumbnail TEXT,
+    duration INTEGER,
+    category TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS video_favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT DEFAULT 'guest',
+    video_id INTEGER,
+    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (video_id) REFERENCES videos (id),
+    UNIQUE(user_id, video_id)
+  )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS video_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT DEFAULT 'guest',
+    video_id INTEGER,
+    watched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    watch_duration INTEGER DEFAULT 0,
+    completed BOOLEAN DEFAULT 0,
+    FOREIGN KEY (video_id) REFERENCES videos (id)
+  )`);
 
     // Add demo tracks if database is empty
     db.get('SELECT COUNT(*) as count FROM tracks', (err, row) => {
@@ -453,10 +186,8 @@ db.serialize(() => {
             ];
 
             demoTracks.forEach(track => {
-                const query = createInsertQuery('tracks', ['title', 'artist', 'album', 'url', 'duration', 'cover_image']);
-                
                 db.run(
-                    query,
+                    'INSERT INTO tracks (title, artist, album, url, duration, cover_image) VALUES (?, ?, ?, ?, ?, ?)',
                     [track.title, track.artist, track.album, track.url, track.duration, track.cover_image],
                     function (err) {
                         if (err) {
@@ -481,8 +212,8 @@ db.serialize(() => {
             ];
 
             genres.forEach(genre => {
-                const genreQuery = createInsertQuery('track_genres', ['track_id', 'genre']);
-                db.run(genreQuery, [genre.track_id, genre.genre]);
+                db.run('INSERT INTO track_genres (track_id, genre) VALUES (?, ?)',
+                    [genre.track_id, genre.genre]);
             });
         }
     });
@@ -528,10 +259,8 @@ db.serialize(() => {
             ];
 
             demoVideos.forEach(video => {
-                const query = createInsertQuery('videos', ['title', 'description', 'url', 'thumbnail', 'duration', 'category']);
-                
                 db.run(
-                    query,
+                    'INSERT INTO videos (title, description, url, thumbnail, duration, category) VALUES (?, ?, ?, ?, ?, ?)',
                     [video.title, video.description, video.url, video.thumbnail, video.duration, video.category],
                     function (err) {
                         if (err) {
@@ -548,9 +277,8 @@ db.serialize(() => {
     // Create default admin user
     db.get('SELECT COUNT(*) as count FROM users WHERE role = "admin"', (err, row) => {
         if (!err && row.count === 0) {
-            const adminUserQuery = createInsertQuery('users', ['username', 'password', 'role']);
             db.run(
-                adminUserQuery,
+                'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
                 ['Gnani14', 'Gnaneshwar@14', 'admin'],
                 function (err) {
                     if (err) {
@@ -621,73 +349,6 @@ app.get('/api/auth-status', (req, res) => {
     }
 });
 
-// Database status endpoint for debugging
-app.get('/api/db-status', (req, res) => {
-    // Get counts of tracks and videos
-    db.get('SELECT COUNT(*) as track_count FROM tracks', (err, trackResult) => {
-        if (err) {
-            return res.status(500).json({ error: 'Failed to count tracks: ' + err.message });
-        }
-        
-        db.get('SELECT COUNT(*) as video_count FROM videos', (err, videoResult) => {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to count videos: ' + err.message });
-            }
-            
-            res.json({
-                database: isPostgres ? 'PostgreSQL' : 'SQLite',
-                hasDbUrl: !!process.env.DATABASE_URL,
-                nodeEnv: process.env.NODE_ENV,
-                timestamp: new Date().toISOString(),
-                counts: {
-                    tracks: trackResult.track_count,
-                    videos: videoResult.video_count
-                },
-                sessionStore: isPostgres ? 'PostgreSQL' : 'Memory'
-            });
-        });
-    });
-});
-
-// Test database write/read
-app.post('/api/test-db', requireAuth, (req, res) => {
-    const testTitle = `Test Video ${Date.now()}`;
-    const query = createInsertQuery('videos', ['title', 'description', 'url', 'thumbnail', 'duration', 'category']);
-    
-    console.log('🧪 Testing database with query:', query);
-    
-    db.run(
-        query,
-        [testTitle, 'Test description', 'https://test.com/video.mp4', 'https://test.com/thumb.jpg', 120, 'test'],
-        function (err) {
-            if (err) {
-                console.error('❌ Test DB Error:', err);
-                res.status(500).json({ error: err.message, query });
-                return;
-            }
-            
-            console.log('✅ Test DB Success, ID:', this.lastID);
-            
-            // Now try to read it back
-            db.get('SELECT * FROM videos WHERE title = ?', [testTitle], (err, row) => {
-                if (err) {
-                    console.error('❌ Test DB Read Error:', err);
-                    res.status(500).json({ error: 'Read failed: ' + err.message });
-                    return;
-                }
-                
-                console.log('✅ Test DB Read Success:', row);
-                res.json({ 
-                    success: true, 
-                    insertedId: this.lastID, 
-                    readBack: row,
-                    database: isPostgres ? 'PostgreSQL' : 'SQLite'
-                });
-            });
-        }
-    );
-});
-
 // API Routes
 // Get all tracks
 app.get('/api/tracks', (req, res) => {
@@ -704,10 +365,8 @@ app.get('/api/tracks', (req, res) => {
 app.post('/api/tracks', requireAuth, (req, res) => {
     const { title, artist, album, url, duration, cover_image } = req.body;
 
-    const query = createInsertQuery('tracks', ['title', 'artist', 'album', 'url', 'duration', 'cover_image']);
-    
     db.run(
-        query,
+        'INSERT INTO tracks (title, artist, album, url, duration, cover_image) VALUES (?, ?, ?, ?, ?, ?)',
         [title, artist, album, url, duration, cover_image],
         function (err) {
             if (err) {
@@ -735,10 +394,8 @@ app.post('/api/tracks/bulk', requireAuth, (req, res) => {
     const insertTrack = (track, callback) => {
         const { title, artist, album, url, duration, cover_image } = track;
 
-        const query = createInsertQuery('tracks', ['title', 'artist', 'album', 'url', 'duration', 'cover_image']);
-        
         db.run(
-            query,
+            'INSERT INTO tracks (title, artist, album, url, duration, cover_image) VALUES (?, ?, ?, ?, ?, ?)',
             [title, artist, album, url, duration || 0, cover_image],
             function (err) {
                 if (err) {
@@ -803,9 +460,8 @@ app.get('/api/playlists', (req, res) => {
 app.post('/api/playlists', requireAuth, (req, res) => {
     const { name, description } = req.body;
 
-    const playlistQuery = createInsertQuery('playlists', ['name', 'description']);
     db.run(
-        playlistQuery,
+        'INSERT INTO playlists (name, description) VALUES (?, ?)',
         [name, description],
         function (err) {
             if (err) {
@@ -845,9 +501,8 @@ app.post('/api/user-playlists', (req, res) => {
     const { name, description, is_public } = req.body;
     const userId = req.session?.user?.id || 'guest';
 
-    const userPlaylistQuery = createInsertQuery('user_playlists', ['user_id', 'name', 'description', 'is_public']);
     db.run(
-        userPlaylistQuery,
+        'INSERT INTO user_playlists (user_id, name, description, is_public) VALUES (?, ?, ?, ?)',
         [userId, name, description, is_public || 0],
         function (err) {
             if (err) {
@@ -886,9 +541,8 @@ app.post('/api/user-playlists/:id/tracks', (req, res) => {
 
             const position = (result.max_pos || 0) + 1;
 
-            const playlistTrackQuery = createInsertQuery('user_playlist_tracks', ['playlist_id', 'track_id', 'position']);
             db.run(
-                playlistTrackQuery,
+                'INSERT INTO user_playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)',
                 [id, track_id, position],
                 function (err) {
                     if (err) {
@@ -984,9 +638,8 @@ app.post('/api/track-interaction', (req, res) => {
 
     // Add to listening history
     if (interaction_type === 'play') {
-        const historyQuery = createInsertQuery('listening_history', ['user_id', 'track_id', 'play_duration', 'completed']);
         db.run(
-            historyQuery,
+            'INSERT INTO listening_history (user_id, track_id, play_duration, completed) VALUES (?, ?, ?, ?)',
             [userId, track_id, play_duration || 0, (play_duration || 0) > 30 ? 1 : 0]
         );
     }
@@ -1042,8 +695,7 @@ app.post('/api/favorites/:trackId', (req, res) => {
             });
         } else {
             // Add to favorites
-            const favoriteQuery = createInsertQuery('user_favorites', ['user_id', 'track_id']);
-            db.run(favoriteQuery, [userId, trackId], (err) => {
+            db.run('INSERT INTO user_favorites (user_id, track_id) VALUES (?, ?)', [userId, trackId], (err) => {
                 if (err) {
                     res.status(500).json({ error: err.message });
                     return;
@@ -1320,18 +972,14 @@ app.get('/api/videos', (req, res) => {
 app.post('/api/videos', requireAuth, (req, res) => {
     const { title, description, url, thumbnail, duration, category } = req.body;
 
-    const query = createInsertQuery('videos', ['title', 'description', 'url', 'thumbnail', 'duration', 'category']);
-    
     db.run(
-        query,
+        'INSERT INTO videos (title, description, url, thumbnail, duration, category) VALUES (?, ?, ?, ?, ?, ?)',
         [title, description, url, thumbnail, duration, category],
         function (err) {
             if (err) {
-                console.error('❌ Error adding video:', err);
                 res.status(500).json({ error: err.message });
                 return;
             }
-            console.log('✅ Video added successfully with ID:', this.lastID);
             res.json({ id: this.lastID, message: 'Video added successfully' });
         }
     );
@@ -1373,8 +1021,7 @@ app.post('/api/video-favorites/:videoId', (req, res) => {
             });
         } else {
             // Add to favorites
-            const videoFavoriteQuery = createInsertQuery('video_favorites', ['user_id', 'video_id']);
-            db.run(videoFavoriteQuery, [userId, videoId], (err) => {
+            db.run('INSERT INTO video_favorites (user_id, video_id) VALUES (?, ?)', [userId, videoId], (err) => {
                 if (err) {
                     res.status(500).json({ error: err.message });
                     return;
@@ -1411,9 +1058,8 @@ app.post('/api/video-watch', (req, res) => {
     const { video_id, watch_duration, completed } = req.body;
     const userId = req.session?.user?.id || 'guest';
 
-    const videoHistoryQuery = createInsertQuery('video_history', ['user_id', 'video_id', 'watch_duration', 'completed']);
     db.run(
-        videoHistoryQuery,
+        'INSERT INTO video_history (user_id, video_id, watch_duration, completed) VALUES (?, ?, ?, ?)',
         [userId, video_id, watch_duration || 0, completed ? 1 : 0],
         function (err) {
             if (err) {
